@@ -898,9 +898,16 @@ static void tcc_debug_frame_end(TCCState *s1, int size)
 #elif defined TCC_TARGET_ARM64
     dwarf_reloc(eh_frame_section, eh_section_sym, R_AARCH64_PREL32);
 #elif defined TCC_TARGET_RISCV64 || defined TCC_TARGET_RISCV32
-    dwarf_reloc(eh_frame_section, eh_section_sym, R_RISCV_32_PCREL);
+    /* RELA: the function's offset is the relocation's addend; a linker
+       ignores what is in the section, so with it there every FDE began at
+       .text+0 and GNU ld rejected them as overlapping */
+    put_elf_reloca(symtab_section, eh_frame_section, eh_frame_section->data_offset,
+                   R_RISCV_32_PCREL, eh_section_sym, func_ind);
+    dwarf_data4(eh_frame_section, 0); // PC Begin
 #endif
+#if !(defined TCC_TARGET_RISCV64 || defined TCC_TARGET_RISCV32)
     dwarf_data4(eh_frame_section, func_ind); // PC Begin
+#endif
     dwarf_data4(eh_frame_section, size); // PC Range
     dwarf_data1(eh_frame_section, 0); // Augmentation Length
 #if defined TCC_TARGET_I386

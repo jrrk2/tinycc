@@ -509,9 +509,23 @@ ST_FUNC void gfunc_call(int nb_args)
     areg[0] = 0; /* int arg regs */
     areg[1] = 0; /* no float arg regs (soft-float) */
     sa = vtop[-nb_args].type.ref->next;
+    /* A struct returned by reference arrives as a hidden first argument
+       (the caller's buffer, see tccgen.c unary) that the prototype's
+       parameter list does not include: it is named, and the list starts
+       at the argument after it.  Taking it for the first parameter shifted
+       every argument by one, so a trailing long long looked variadic and
+       was moved to an even register pair (lldiv). */
+    int hidden_sret = 0;
+    {
+        CType *rt = &vtop[-nb_args].type.ref->type;
+        int ra;
+        if ((rt->t & VT_BTYPE) == VT_STRUCT && type_size(rt, &ra) > 2 * XLEN)
+            hidden_sret = 1;
+    }
     for (i = 0; i < nb_args; i++) {
         int nregs, byref = 0, tempofs;
         int prc[3], fieldofs[3];
+        Sym *psa = (hidden_sret && i == 0) ? vtop[-nb_args].type.ref : sa; /* non-null: named */
         sv = &vtop[1 + i - nb_args];
         sv->type.t &= ~VT_ARRAY; // XXX this should be done in tccgen.c
         size = type_size(&sv->type, &align);
@@ -519,7 +533,7 @@ ST_FUNC void gfunc_call(int nb_args)
            long double passed by reference.  TCC internally uses 64-bit
            double, so force the size to 16 to trigger the byref path.
            The byref store phase converts the value to quad format. */
-        if (!sa && (sv->type.t & VT_BTYPE) == VT_DOUBLE
+        if (!psa && (sv->type.t & VT_BTYPE) == VT_DOUBLE
                 && (sv->type.t & VT_LONG)) {
             size = 16;
             align = 16;
@@ -533,8 +547,8 @@ ST_FUNC void gfunc_call(int nb_args)
             size = align = XLEN;
             byref = 64 | (tempofs << 7);
         }
-        reg_pass(&sv->type, prc, fieldofs, old || sa != 0);
-        if (!old && !sa && align == 2*XLEN && size <= 2*XLEN)
+        reg_pass(&sv->type, prc, fieldofs, old || psa != 0);
+        if (!old && !psa && align == 2*XLEN && size <= 2*XLEN)
           areg[0] = (areg[0] + 1) & ~1;
         nregs = prc[0];
         if (byref)
@@ -546,7 +560,7 @@ ST_FUNC void gfunc_call(int nb_args)
             if (align < XLEN)
               align = XLEN;
             stack_adj += (size + align - 1) & -align;
-            if (!old && !sa) /* one vararg on stack forces the rest on stack */
+            if (!old && !psa) /* one vararg on stack forces the rest on stack */
               areg[0] = 8;
         } else {
             info[i] = areg[0]++;
@@ -567,7 +581,7 @@ ST_FUNC void gfunc_call(int nb_args)
             }
         }
         info[i] |= byref;
-        if (sa)
+        if (sa && !(hidden_sret && i == 0))
           sa = sa->next;
     }
     stack_adj = (stack_adj + 15) & -16;
